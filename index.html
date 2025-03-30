@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>42 Domino Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for dominoes and game layout */
+        body {
+            font-family: 'Inter', sans-serif;
+            touch-action: none; /* Prevent default touch actions like scrolling when dragging */
+        }
+
+        /* --- Game States (Visibility Control) --- */
+        #new-hand-button { display: none; } /* Hide button by default */
+        #play-area { display: none; } /* Hide play area initially */
+        .opponent-hand, #partner-hand { display: flex; } /* Opponent/Partner areas always flex */
+        #info-action-area { display: block; visibility: visible; } /* Visible by default */
+        #bidding-actions, #trump-actions { display: none; } /* Hide action buttons initially */
+        #game-status-info { display: block; } /* Top status always visible */
+
+        /* State: DRAWING */
+        body.state-drawing #play-area { display: grid; } /* Boneyard uses Grid */
+        body.state-drawing #player-area { display: block; }
+        body.state-drawing #info-action-area #info-message { display: block; } /* Show Draw message */
+        body.state-drawing #info-action-area #bidding-actions { display: none; }
+        body.state-drawing #info-action-area #trump-actions { display: none; }
+        body.state-drawing #info-action-area #new-hand-button { display: none; }
+        /* Add cursor pointer for clickable/draggable boneyard dominoes */
+        body.state-drawing #play-area .domino { cursor: grab !important; } /* Use grab cursor */
+
+        /* State: BIDDING */
+        body.state-bidding #player-area { display: block; }
+        body.state-bidding #play-area { display: flex; justify-content: center; align-items: center; } /* Clear play area, keep flex for placeholder*/
+        /* Side-by-side layout for bid log and actions */
+        body.state-bidding #info-action-area { display: flex; align-items: flex-start; justify-content: center; gap: 1rem; position: relative; }
+        body.state-bidding #info-action-area #info-message { display: block; flex: 1 1 0px; max-width: 350px; text-align: left; margin-bottom: 0; }
+        body.state-bidding #info-action-area #info-message .bid-log-table { display: grid; }
+        body.state-bidding #info-action-area #bidding-actions { display: block; flex: 1 1 0px; max-width: 350px; text-align: center; position: relative; }
+        body.state-bidding #info-action-area #trump-actions { display: none; }
+        body.state-bidding #info-action-area #new-hand-button { display: none; }
+
+        /* State: CHOOSE_TRUMP */
+        body.state-choose_trump #player-area { display: block; }
+        body.state-choose_trump #play-area { display: flex; justify-content: center; align-items: center; } /* Keep play area clear */
+        body.state-choose_trump #info-action-area { display: block; visibility: visible; } /* Ensure area is visible */
+        body.state-choose_trump #info-action-area #info-message { display: block; text-align: center; } /* Show "Choose Trump" msg */
+        body.state-choose_trump #info-action-area #bidding-actions { display: none; }
+        body.state-choose_trump #info-action-area #trump-actions { display: block; text-align: center; margin-top: 0.5rem; } /* Show trump buttons */
+        body.state-choose_trump #info-action-area #new-hand-button { display: none; }
+
+        /* State: PLAYING */
+        body.state-playing #player-area { display: block; }
+        body.state-playing #play-area {
+            display: grid; /* Use Grid for played domino layout */
+            grid-template-columns: 1fr 110px 1fr; /* Flexible outer, fixed center */
+            grid-template-rows: 1fr 60px 1fr;    /* Flexible outer, fixed center */
+            align-items: center;
+            justify-items: center;
+            position: relative;
+            background-color: #f7fafc;
+            border-style: solid;
+            padding: 10px;
+            min-height: 240px;
+        }
+        body.state-playing #info-action-area { visibility: hidden; } /* Hide info/action area but keep space */
+
+        /* State: SCORING */
+        body.state-scoring #player-area { display: block; }
+        body.state-scoring #play-area { display: flex; justify-content: center; align-items: center; } /* Clear play area */
+        body.state-scoring #info-action-area { visibility: visible; } /* Show info area for message/button */
+        body.state-scoring #info-action-area #info-message { display: none; } /* Hide message area */
+        body.state-scoring #info-action-area #bidding-actions { display: none; }
+        body.state-scoring #info-action-area #trump-actions { display: none; }
+        body.state-scoring #info-action-area #new-hand-button { display: inline-block; } /* Show deal button */
+
+        /* --- Domino Styles --- */
+        .domino { width: 100px; height: 50px; border: 1px solid black; background-color: white; border-radius: 8px; margin: 5px; cursor: grab; position: relative; perspective: 1000px; display: inline-block; vertical-align: middle; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); transform-origin: center center; flex-shrink: 0; box-sizing: border-box; }
+        .domino-small { width: 50px; height: 25px; border-radius: 4px; margin: 0; box-shadow: 1px 1px 3px rgba(0,0,0,0.2); cursor: default !important; border: 1px solid black; box-sizing: border-box; }
+        .domino-tiny { width: 40px; height: 20px; border-radius: 3px; margin: 0 0 1px 0; box-shadow: 1px 1px 2px rgba(0,0,0,0.15); border: 1px solid black; box-sizing: border-box; background-color: white; }
+        .domino-micro { width: 30px; height: 15px; border-radius: 2px; margin: 0 0 1px 0; box-shadow: 1px 1px 1px rgba(0,0,0,0.1); border: 1px solid #6b7280; box-sizing: border-box; background-color: white; } /* Updated Micro Size */
+
+        /* Adjust pip size for small/tiny/micro dominoes */
+        .domino-small .pip, .domino-tiny .pip, .domino-micro .pip { width: 4px; height: 4px; }
+        .domino-small .divider, .domino-tiny .divider, .domino-micro .divider { width: 1px; height: 70%; top: 15%; }
+        .domino-tiny .pip { width: 3px; height: 3px; }
+        .domino-tiny .pip-container { padding: 2px; }
+        .domino-micro .pip { width: 2px; height: 2px; } /* Even smaller pips */
+        .domino-micro .divider { height: 60%; top: 20%; }
+        .domino-micro .pip-container { padding: 1px; }
+
+        .domino:not(.face-up) { background-color: #4a5568; } .domino:not(.face-up) .domino-inner { display: none; }
+        #player-hand-area .domino.face-up { background-color: white; cursor: pointer;}
+        #player-hand-area .domino.face-up .domino-inner { display: block; transform: rotateY(0deg); }
+        .opponent-hand .domino, #partner-hand .domino { background-color: #4a5568; cursor: default;}
+        .opponent-hand .domino .domino-inner, #partner-hand .domino .domino-inner { display: none; }
+        .domino-inner { position: relative; width: 100%; height: 100%; text-align: center; transition: transform 0.6s; transform-style: preserve-3d; border-radius: inherit; display: none; }
+        .domino-face, .domino-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: inherit; display: flex; flex-direction: row; justify-content: space-around; align-items: center; }
+        .domino-face { background-color: white; color: black; }
+        .domino-back { background-color: #4a5568; display: flex; justify-content: center; align-items: center; }
+        .domino-back::before { content: ''; width: 8px; height: 8px; background-color: #cbd5e0; border-radius: 50%; }
+        .domino-small .domino-back::before, .domino-tiny .domino-back::before, .domino-micro .domino-back::before { width: 3px; height: 3px; } /* Adjusted tiny/micro */
+        .divider { width: 2px; height: 80%; background-color: black; position: absolute; left: 50%; top: 10%; transform: translateX(-50%); }
+        .pip-container { width: 45%; height: 100%; display: grid; align-items: center; justify-items: center; padding: 5px; box-sizing: border-box; }
+        .pip { width: 8px; height: 8px; background-color: black; border-radius: 50%; }
+
+        .pips-0 {}
+        .pips-1 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-1 .pip:nth-child(1) { grid-area: 2 / 2; }
+        .pips-2 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-2 .pip:nth-child(1) { grid-area: 1 / 1; } .pips-2 .pip:nth-child(2) { grid-area: 3 / 3; }
+        .pips-3 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-3 .pip:nth-child(1) { grid-area: 1 / 1; } .pips-3 .pip:nth-child(2) { grid-area: 2 / 2; } .pips-3 .pip:nth-child(3) { grid-area: 3 / 3; }
+        .pips-4 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-4 .pip:nth-child(1) { grid-area: 1 / 1; } .pips-4 .pip:nth-child(2) { grid-area: 1 / 3; } .pips-4 .pip:nth-child(3) { grid-area: 3 / 1; } .pips-4 .pip:nth-child(4) { grid-area: 3 / 3; }
+        .pips-5 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-5 .pip:nth-child(1) { grid-area: 1 / 1; } .pips-5 .pip:nth-child(2) { grid-area: 1 / 3; } .pips-5 .pip:nth-child(3) { grid-area: 2 / 2; } .pips-5 .pip:nth-child(4) { grid-area: 3 / 1; } .pips-5 .pip:nth-child(5) { grid-area: 3 / 3; }
+        .pips-6 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+        .pips-6 .pip:nth-child(1) { grid-area: 1 / 1; } .pips-6 .pip:nth-child(2) { grid-area: 1 / 2; } .pips-6 .pip:nth-child(3) { grid-area: 1 / 3; } .pips-6 .pip:nth-child(4) { grid-area: 3 / 1; } .pips-6 .pip:nth-child(5) { grid-area: 3 / 2; } .pips-6 .pip:nth-child(6) { grid-area: 3 / 3; }
+
+        .dragging { opacity: 0.4; cursor: grabbing; box-shadow: 5px 5px 15px rgba(0,0,0,0.4); transform: scale(1.05); pointer-events: none; z-index: 100; }
+        .domino-placeholder { width: 52px; height: 27px; box-sizing: border-box; margin: 0; border-radius: 4px; border: 1px solid transparent; }
+        .insertion-marker::before { content: ''; position: absolute; left: calc(-5px - 2px); top: 10%; width: 4px; height: 80%; background-color: #3b82f6; border-radius: 2px; z-index: 10; pointer-events: none; }
+        .insertion-marker-after-last::after { content: ''; position: absolute; right: calc(-5px - 2px); top: 10%; width: 4px; height: 80%; background-color: #3b82f6; border-radius: 2px; z-index: 10; pointer-events: none; }
+        .new-row-marker-below::after { content: ''; position: absolute; bottom: -8px; left: 5%; width: 90%; height: 4px; background-color: #3b82f6; border-radius: 2px; z-index: 5; pointer-events: none; }
+
+        /* --- Layout Styling --- */
+        #game-area {
+            display: grid;
+            grid-template-areas:
+                "status status status"
+                "top-area top-area top-area" /* New row for partner+stacks */
+                "opp1 play opp2"
+                "info info info"
+                "player player player"
+                "controls controls controls";
+            grid-template-columns: auto 1fr auto; /* Opponent width, flexible middle, Opponent width */
+            grid-template-rows: auto auto auto auto 1fr auto; /* Add auto row for top-area */
+            gap: 1rem; max-width: 900px; margin: auto; align-items: start;
+        }
+        #status-area-container { grid-area: status; }
+        #top-area {
+            grid-area: top-area;
+            display: flex;
+            justify-content: center; /* Center partner hand */
+            align-items: flex-end; /* Align bottoms of stacks/hand */
+            gap: 1rem; /* Space between stacks and partner hand */
+            min-height: 100px; /* Min height for stacks */
+        }
+        #tricks-team-1 { /* Opponent Tricks - Left */ }
+        #partner-hand { /* Partner Hand - Center */ }
+        #tricks-team-0 { /* Your Tricks - Right */ }
+        #opponent-left { grid-area: opp1; justify-self: end; } /* Align opponent to edge */
+        #play-area { grid-area: play; justify-self: stretch; } /* Allow play area to stretch */
+        #opponent-right { grid-area: opp2; justify-self: start; } /* Align opponent to edge */
+        #info-action-area { grid-area: info; }
+        #player-area { grid-area: player; }
+        #controls-area { grid-area: controls; text-align: center; }
+
+        /* Opponent Hand Styling (Sides: Opponent 1 & 2) */
+        .opponent-hand { display: flex; border: 1px solid #ccc; border-radius: 8px; padding: 5px; min-height: 240px; background-color: #e2e8f0; text-align: center; flex-direction: column; align-items: center; justify-content: flex-start; position: relative; overflow: visible; width: 90px; }
+        .opponent-hand h3 { position: absolute; top: 50%; transform: translateY(-50%); font-size: 0.875rem; color: #374151; font-weight: 600; white-space: nowrap; padding: 2px 0; background-color: #e2e8f0; z-index: 1; }
+        #opponent-left h3 { left: 5px; writing-mode: vertical-lr; transform: translateY(-50%) rotate(180deg); }
+        #opponent-right h3 { right: 5px; writing-mode: vertical-lr; }
+        #opponent-left .domino-display, #opponent-right .domino-display { margin-top: 0; padding: 1.5em 0 0 0; display: flex; flex-direction: column; align-items: center; gap: 1px; width: 100%; }
+        #opponent-left .domino-display { padding-left: 1.7em; padding-right: 0; }
+        #opponent-right .domino-display { padding-right: 1.7em; padding-left: 0; }
+
+        /* Partner Hand Styling (Top: Partner) */
+        #partner-hand { display: flex; border: 1px solid #ccc; border-radius: 8px; padding: 1px 5px 5px 5px; min-height: 60px; width: auto; background-color: #e2e8f0; text-align: center; flex-direction: column; align-items: center; min-width: 375px; justify-content: flex-start; position: relative; flex-shrink: 0; /* Prevent partner hand from shrinking */ }
+        #partner-hand h3 { position: static; writing-mode: horizontal-tb; transform: none; font-size: 0.875rem; margin: 0 0 1px 0; color: #374151; font-weight: 600; padding: 0; }
+        #partner-hand .domino-display { display: flex; flex-direction: row; justify-content: center; gap: 1px; flex-wrap: wrap; margin-top: 0; padding: 0; width: auto; align-items: center; }
+
+        /* Play Area Styling */
+        #play-area { min-height: 240px; height: 100%; border: 1px dashed gray; border-radius: 8px; padding: 10px; background-color: #e2e8f0; } /* Default padding */
+        body.state-drawing #play-area { display: grid; grid-template-columns: repeat(7, 52px); grid-template-rows: repeat(4, 27px); justify-content: center; align-content: center; gap: 4px; align-items: center; justify-items: center; }
+        body.state-playing #play-area { display: grid; grid-template-columns: 1fr 110px 1fr; grid-template-rows: 1fr 60px 1fr; align-items: center; justify-items: center; background-color: #f7fafc; border-style: solid; padding: 10px; }
+        body.state-drawing #play-area .domino, body.state-drawing #play-area .domino-placeholder { margin: 0; width: 52px; height: 27px; }
+        #play-area .domino { margin: 0; position: static; transform-origin: center; }
+        #play-area .domino[data-player-index="0"] { grid-row: 3; grid-column: 2; transform: rotate(0deg); } /* Player (Bottom Center) */
+        #play-area .domino[data-player-index="1"] { grid-row: 2; grid-column: 1; transform: rotate(90deg); } /* Left Opponent (Middle Left) */
+        #play-area .domino[data-player-index="2"] { grid-row: 1; grid-column: 2; transform: rotate(0deg); } /* Partner (Top Center) */
+        #play-area .domino[data-player-index="3"] { grid-row: 2; grid-column: 3; transform: rotate(90deg); } /* Right Opponent (Middle Right) */
+
+        /* Status Area Redesign */
+        #status-area { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; padding: 0.5rem 1rem; border: 1px solid #ccc; border-radius: 8px; background-color: white; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); }
+        .status-left { display: flex; align-items: center; } .status-title { font-size: 1.5rem; font-weight: 600; color: #374151; } .status-divider { width: 1px; height: 1.5rem; background-color: #d1d5db; margin-left: 1rem; margin-right: 1rem; } .status-center { flex-grow: 1; text-align: center; padding: 0 1rem; } .score-chart { text-align: right; font-size: 0.875rem; } .score-chart div { line-height: 1.3; }
+
+        /* Info/Action Area */
+        #info-action-area { padding: 0.5rem; text-align: center; min-height: 80px; visibility: visible; }
+        body.state-playing #info-action-area { visibility: hidden; }
+        /* Keep visible during scoring for message/button */
+        body.state-scoring #info-action-area { visibility: visible; }
+
+        /* Info Message Area (Draw Message / Bid Log / Score Message) */
+        #info-message { margin-bottom: 0.5rem; }
+        #info-message.draw-message { font-weight: 600; color: #3b82f6; text-align: center; }
+        #info-message .bid-log-table { display: none; grid-template-columns: repeat(2, auto 1fr); gap: 0.25rem 1rem; font-size: 0.875rem; line-height: 1.4; color: #4b5563; text-align: left; border: 1px solid #d1d5db; padding: 6px 10px; border-radius: 6px; background-color: #f9fafb; }
+        #info-message .bid-log-table .label { font-weight: 600; text-align: right; }
+        #info-message .bid-log-table .value { text-align: left; font-style: italic; }
+        /* Hide specific elements during scoring */
+        body.state-scoring #info-message { display: none; } /* Hide info message area in scoring */
+        body.state-scoring #bidding-actions { display: none; }
+        body.state-scoring #trump-actions { display: none; }
+        /* Style scoring message - REMOVED as message is hidden */
+        /* body.state-scoring #info-message { font-weight: 600; text-align: center; } */
+
+        /* Bidding State Layout */
+        body.state-bidding #info-action-area { display: flex; align-items: flex-start; justify-content: center; gap: 1rem; }
+        body.state-bidding #info-message { flex: 1 1 0px; max-width: 350px; text-align: left; margin-bottom: 0; }
+        body.state-bidding #info-message .bid-log-table { display: grid; margin: 0; max-width: none; }
+        body.state-bidding #info-message.draw-message { display: none; }
+        body.state-bidding #bidding-actions { display: block; flex: 1 1 0px; max-width: 350px; text-align: center; position: relative; }
+
+        /* Trump Choice State Layout */
+        body.state-choose_trump #info-action-area { display: block; } /* Revert to block for centering */
+        body.state-choose_trump #info-message { text-align: center; font-weight: 600; } /* Center "Choose Trump" msg */
+        body.state-choose_trump #trump-actions { display: block; text-align: center; margin-top: 0.5rem; }
+
+        /* Scoring State Layout */
+        body.state-scoring #new-hand-button { display: inline-block; margin-top: 0.5rem; }
+
+        /* Player Hand Area */
+        #player-hand-area { min-height: 90px; border: 2px solid #4a5568; background-color: #f7fafc; padding: 10px; padding-bottom: 10px; position: relative; display: flex; flex-direction: column; align-items: center; transition: padding-bottom 0.2s ease-in-out; }
+        #player-hand-area.hand-extra-padding { padding-bottom: 30px; }
+        .hand-row { display: flex; flex-wrap: wrap; align-items: flex-start; min-height: 60px; margin-bottom: 5px; padding: 0; border-radius: 8px; gap: 5px; width: max-content; max-width: 100%; position: relative; }
+        .hand-row:last-child { margin-bottom: 0; }
+        #player-hand-area .domino.illegal-domino { opacity: 0.5; cursor: not-allowed !important; }
+
+        /* Message Box */
+        #message-box { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.7); color: white; padding: 10px 20px; border-radius: 5px; display: none; z-index: 1000; }
+        /* Placeholder Text */
+        .placeholder { color: #a0aec0; font-style: italic; }
+        /* CSS for the flipping animation */
+        .flipping { transition: transform 0.1s ease-out; transform: scale(1.03); }
+        /* --- Dealer Indicator Styles --- */
+        .dealer-tag { position: absolute; top: 3px; right: 3px; background-color: #3b82f6; color: white; font-size: 0.65rem; font-weight: 600; padding: 1px 4px; border-radius: 4px; z-index: 10; line-height: 1; }
+        #player-hand-area .dealer-tag { top: 5px; right: 5px; }
+        /* --- Current Player Indicator --- */
+        .current-player-indicator { border: 2px solid #10b981 !important; box-shadow: 0 0 8px #10b981; }
+
+        /* --- Bid Popup Styles --- */
+        #bid-popup { position: fixed; width: max-content; max-width: 300px; background-color: white; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 0.75rem; z-index: 50; display: none; }
+        #bid-popup-buttons button { margin: 2px; font-size: 0.875rem; padding: 2px 6px; }
+        /* --- Popup Overlay --- */
+        #popup-overlay { position: fixed; inset: 0; background-color: rgba(0, 0, 0, 0.5); z-index: 40; display: none; }
+
+        /* --- Trick Stack Styles --- */
+        .trick-stack {
+            display: flex;
+            flex-direction: row; /* Stacks grow horizontally */
+            align-items: flex-end; /* Align columns to the bottom */
+            gap: 2px; /* Space between trick columns */
+            min-height: 90px; /* Adjust height as needed */
+            flex-grow: 1; /* Allow stacks to grow */
+            flex-basis: 0; /* Allow stacks to grow */
+            padding: 5px;
+            padding-top: 15px; /* Add padding for count */
+            border: 1px solid #b0b0b0;
+            border-radius: 8px;
+            background-color: #d1d5db; /* gray-300 */
+            overflow-x: auto; /* Allow horizontal scroll if many tricks */
+            position: relative; /* For count positioning */
+        }
+        .trick-column {
+            display: flex;
+            flex-direction: column; /* Stack dominoes vertically */
+            align-items: center;
+            flex-shrink: 0; /* Prevent columns from shrinking */
+        }
+        .trick-stack .trick-count {
+            position: absolute;
+            top: 2px; /* Position count at top */
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #4b5563; /* gray-600 */
+            background-color: rgba(255, 255, 255, 0.6);
+            padding: 0 4px;
+            border-radius: 3px;
+            white-space: nowrap;
+            z-index: 5; /* Above dominoes */
+        }
+
+    </style>
+</head>
+<body class="bg-gray-100 p-4 state-drawing">
+
+<div id="game-area" class="container mx-auto">
+
+    <div id="status-area-container">
+        <div id="status-area">
+            <div class="status-left">
+                <span class="status-title">42</span>
+                <span class="status-divider"></span>
+            </div>
+            <div class="status-center">
+                <div id="game-status-info" class="text-sm text-gray-700"></div>
+            </div>
+            <div class="score-chart">
+              <div id="score-display-us"></div>
+              <div id="score-display-them"></div>
+            </div>
+        </div>
+    </div>
+    <div id="top-area">
+      <div id="tricks-team-1" class="trick-stack">
+          <div class="trick-count">Opponent Points: <span class="trick-count-value">0</span></div>
+      </div>
+
+      <div id="partner-hand" class="opponent-hand" data-player-index="2">
+          <h3></h3>
+          <div class="domino-display"> </div>
+      </div>
+
+      <div id="tricks-team-0" class="trick-stack">
+          <div class="trick-count">Your Points: <span class="trick-count-value">0</span></div>
+      </div>
+
+      </div>
+        <div id="opponent-left" class="opponent-hand" data-player-index="1">
+            <h3></h3>
+            <div class="domino-display"> </div>
+        </div>
+
+        <div id="play-area">
+        </div>
+
+        <div id="opponent-right" class="opponent-hand" data-player-index="3">
+            <h3></h3>
+            <div class="domino-display"> </div>
+        </div>
+
+        <div id="info-action-area">
+            <div id="info-message"></div>
+            <div id="bidding-actions"></div>
+            <div id="trump-actions" class="hidden"></div>
+
+            <button id="new-hand-button" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
+                Deal New Hand
+            </button>
+        </div>
+
+        <div id="player-area">
+            <div id="player-hand-area" data-player-index="0"></div>
+        </div>
+
+        <div id="controls-area" class="mt-4">
+            <div id="message-box"></div>
+         </div>
+
+    </div>
+
+    <div id="popup-overlay"></div>
+
+    <div id="bid-popup">
+        <h4 class="font-semibold mb-2 text-sm">Choose Bid</h4>
+        <div id="bid-popup-buttons" class="flex flex-wrap gap-1 justify-center"></div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const playAreaDisplay = document.getElementById('play-area');
+        const playerHandDisplay = document.getElementById('player-hand-area');
+        const opponentDisplays = [ null, document.querySelector('#opponent-left .domino-display'), document.querySelector('#partner-hand .domino-display'), document.querySelector('#opponent-right .domino-display') ];
+        const opponentContainers = [ null, document.getElementById('opponent-left'), document.getElementById('partner-hand'), document.getElementById('opponent-right') ];
+        const playerAreaContainer = document.getElementById('player-hand-area');
+        const opponentNameLabels = [ null, document.querySelector('#opponent-left h3'), document.querySelector('#partner-hand h3'), document.querySelector('#opponent-right h3') ];
+        const newHandButton = document.getElementById('new-hand-button');
+        const messageBox = document.getElementById('message-box');
+        const scoreDisplayUs = document.getElementById('score-display-us');
+        const scoreDisplayThem = document.getElementById('score-display-them');
+        const infoMessageElement = document.getElementById('info-message');
+        const gameStatusInfoElement = document.getElementById('game-status-info');
+        const biddingActionsContainer = document.getElementById('bidding-actions');
+        const trumpActionsContainer = document.getElementById('trump-actions');
+        const bidPopupElement = document.getElementById('bid-popup');
+        const bidPopupButtonsContainer = document.getElementById('bid-popup-buttons');
+        const popupOverlay = document.getElementById('popup-overlay');
+        const tricksTeam0Display = document.getElementById('tricks-team-0'); // Your team's stack
+        const tricksTeam1Display = document.getElementById('tricks-team-1'); // Opponent team's stack
+        const bodyElement = document.body;
+
+        // --- Game Constants ---
+        const MIN_BID = 30;
+        const MAX_STANDARD_BID = 42;
+        const ONE_MARK = 42;
+        const TWO_MARKS = 43;
+        const AI_THINKING_TIME = 1000;
+        const TRICK_END_PAUSE = 1500; // Pause after trick completion
+        const SUIT_NAMES = ["Blanks", "Aces", "Deuces", "Treys", "Fours", "Fives", "Sixes"];
+        const PLAYER_COUNT = 4;
+
+        // --- Game State ---
+        let gameState = 'INIT';
+        let boneyardDominoes = [];
+        let playerHands = [[], [], [], []];
+        let scores = [0, 0]; // [Team 0 (You/Partner), Team 1 (Opponents)] - Overall game score (marks)
+        let currentDealerIndex = -1; // Randomized on first game
+        let currentHandState = {};
+        let playerNames = ["You", "Opponent 1", "Partner", "Opponent 2"];
+
+        // Drag & Drop State
+        let draggedDomino = null; let draggedDominoData = null; let currentInsertBeforeElement = null;
+        let currentInsertAfterElement = null; let currentTargetRow = null; let canCreateRow = false;
+        let isDraggingFromBoneyard = false; // Flag for boneyard drag source
+        const MAX_ROWS = 3; const HAND_SIZE = 7; const DEAL_ANIMATION_DURATION = 200;
+        const DEAL_ANIMATION_DELAY = 25; let nextAiPlayerIndex = 1;
+
+        // --- Core Game Logic Functions ---
+
+        /** Sets the game state and updates the UI accordingly. */
+        function setGameState(newState) {
+            gameState = newState;
+            bodyElement.className = `bg-gray-100 p-4 state-${newState.toLowerCase()}`;
+
+            if (infoMessageElement) infoMessageElement.innerHTML = ''; // Clear info area
+
+            if (newState !== 'BIDDING' && newState !== 'CHOOSE_TRUMP' && newState !== 'PLAYING') {
+                 updateCurrentPlayerIndicator(-1);
+            }
+
+            switch (newState) {
+                case 'DRAWING':
+                    displayGameMessage(`Draw ${HAND_SIZE} dominoes.`);
+                    if (gameStatusInfoElement) gameStatusInfoElement.textContent = '';
+                    // Clear trick stacks visually and reset counts in state object
+                    if (tricksTeam0Display) tricksTeam0Display.innerHTML = `<div class="trick-count">Your Points: <span class="trick-count-value">0</span></div>`; // Updated Label
+                    if (tricksTeam1Display) tricksTeam1Display.innerHTML = `<div class="trick-count">Opponent Points: <span class="trick-count-value">0</span></div>`; // Updated Label
+                    if(currentHandState.tricksWon) currentHandState.tricksWon = [0,0]; // Reset counts if state exists
+                    if(currentHandState.pointsTaken) currentHandState.pointsTaken = [0,0];
+                    renderBoneyard();
+                    break;
+                case 'BIDDING':
+                    updatePlayerHandInteractivity(); // Ensure existing hand is interactive
+                    startBiddingPhase();
+                    break;
+                case 'CHOOSE_TRUMP':
+                    updatePlayerHandInteractivity(); // Ensure existing hand is interactive
+                    initiateTrumpChoice();
+                    break;
+                case 'PLAYING':
+                    startPlayingPhase(); // This will call renderPlayerHandWithLegality
+                    break;
+                case 'SCORING':
+                    startScoringPhase();
+                    break;
+                case 'GAME_OVER':
+                    // TODO: Display game over message and final scores
+                    break;
+            }
+            updateHandPadding();
+        }
+
+        /** Initializes a new hand */
+        function setupNewHand() {
+            if (currentDealerIndex !== -1) {
+                currentDealerIndex = (currentDealerIndex + 1) % PLAYER_COUNT;
+            }
+            currentHandState = {
+                dealerIndex: currentDealerIndex, bidsMadeThisRound: 0, currentBid: 0,
+                highestBidderIndex: -1, bidWinnerIndex: -1, winningBid: 0, trumpSuit: null,
+                leadPlayerIndex: -1, currentPlayerIndex: (currentDealerIndex + 1) % PLAYER_COUNT,
+                currentTrick: [], tricksWon: [0, 0], pointsTaken: [0, 0]
+            };
+            boneyardDominoes = createDominoSet(); shuffleArray(boneyardDominoes);
+            playerHands = [[], [], [], []]; clearHandDisplay(); renderOpponentHands();
+            updatePlayerNameLabels(); updateDealerIndicator(); setGameState('DRAWING');
+        }
+
+        /** Sets the text content of the opponent/partner name labels */
+        function updatePlayerNameLabels() {
+            for (let i = 1; i < PLAYER_COUNT; i++) {
+                if (opponentNameLabels[i]) opponentNameLabels[i].textContent = playerNames[i];
+            }
+            // Update score display labels too
+            updateScoreDisplay();
+            // Update trick stack labels
+            if (tricksTeam0Display) tricksTeam0Display.querySelector('.trick-count').innerHTML = `Your Points: <span class="trick-count-value">0</span>`; // Updated Label
+            if (tricksTeam1Display) tricksTeam1Display.querySelector('.trick-count').innerHTML = `Opponent Points: <span class="trick-count-value">0</span>`; // Updated Label
+        }
+
+        /** Updates the score display in the top status bar */
+        function updateScoreDisplay() {
+            scoreDisplayUs.textContent = `${playerNames[0]}/${playerNames[2]}: ${scores[0]}`;
+            scoreDisplayThem.textContent = `${playerNames[1]}/${playerNames[3]}: ${scores[1]}`;
+        }
+
+        /** Updates the visual indicator (tag only) for the current dealer. */
+        function updateDealerIndicator() {
+            const allPlayerAreas = [playerAreaContainer, opponentContainers[1], opponentContainers[2], opponentContainers[3]];
+            allPlayerAreas.forEach(area => { if (area) { const tag = area.querySelector('.dealer-tag'); if (tag) tag.remove(); } });
+            let dealerArea = null;
+            switch (currentHandState.dealerIndex) {
+                case 0: dealerArea = playerAreaContainer; break; case 1: dealerArea = opponentContainers[1]; break;
+                case 2: dealerArea = opponentContainers[2]; break; case 3: dealerArea = opponentContainers[3]; break;
+            }
+            if (dealerArea) { const tag = document.createElement('span'); tag.classList.add('dealer-tag'); tag.textContent = 'Dealer'; dealerArea.appendChild(tag); }
+        }
+
+        /** Updates the visual indicator (green outline) for the current player. */
+        function updateCurrentPlayerIndicator(playerIndex) {
+            const allPlayerAreas = [playerAreaContainer, opponentContainers[1], opponentContainers[2], opponentContainers[3]];
+            allPlayerAreas.forEach(area => { if (area) area.classList.remove('current-player-indicator'); });
+            if (playerIndex >= 0 && playerIndex < PLAYER_COUNT) {
+                let currentPlayerArea = null;
+                switch (playerIndex) {
+                    case 0: currentPlayerArea = playerAreaContainer; break; case 1: currentPlayerArea = opponentContainers[1]; break;
+                    case 2: currentPlayerArea = opponentContainers[2]; break; case 3: currentPlayerArea = opponentContainers[3]; break;
+                }
+                if (currentPlayerArea) currentPlayerArea.classList.add('current-player-indicator');
+            }
+        }
+
+        /** Ensures dominoes in the player's hand are interactive */
+        function updatePlayerHandInteractivity() { // Renamed function
+            playerHandDisplay.querySelectorAll('.hand-row .domino').forEach(dominoEl => {
+                dominoEl.draggable = true;
+                dominoEl.style.cursor = 'pointer';
+                dominoEl.classList.remove('illegal-domino');
+                // Re-attach listeners (remove first to prevent duplicates)
+                dominoEl.removeEventListener('click', handleDominoClick);
+                dominoEl.addEventListener('click', handleDominoClick);
+                dominoEl.removeEventListener('dragstart', handleDragStart);
+                dominoEl.addEventListener('dragstart', handleDragStart);
+                dominoEl.removeEventListener('dragend', handleDragEnd);
+                dominoEl.addEventListener('dragend', handleDragEnd);
+            });
+        }
+
+        /** Renders the boneyard */
+        function renderBoneyard() {
+            playAreaDisplay.innerHTML = '';
+            boneyardDominoes.forEach(item => {
+                if (item === null) { const ph = document.createElement('div'); ph.className = 'domino-placeholder'; playAreaDisplay.appendChild(ph); }
+                else {
+                    const el = renderDomino(item, false, 'small');
+                    const isDrawing = (gameState === 'DRAWING');
+                    el.draggable = isDrawing; // Set draggable based on state
+                    el.style.cursor = isDrawing ? 'grab' : 'default'; // Use grab cursor if draggable
+                    // Add drag listeners only if draggable
+                    if (isDrawing) {
+                        el.addEventListener('dragstart', handleDragStart);
+                        el.addEventListener('dragend', handleDragEnd);
+                    }
+                    playAreaDisplay.appendChild(el);
+                 }
+            });
+        }
+
+        /** Generic function to animate a domino moving */
+        function animateDominoMove(dominoElement, sourceContainer, targetContainer, onCompleteCallback) {
+            const startRect = dominoElement.getBoundingClientRect(); const targetRect = targetContainer.getBoundingClientRect();
+            const targetX = targetRect.left + targetRect.width / 2 - startRect.left - startRect.width / 2;
+            const targetY = targetRect.top + targetRect.height / 2 - startRect.top - startRect.height / 2;
+            const placeholder = document.createElement('div'); placeholder.className = 'domino-placeholder';
+             if (sourceContainer === playAreaDisplay) { placeholder.style.width = '52px'; placeholder.style.height = '27px'; }
+            if (dominoElement.parentNode === sourceContainer) { sourceContainer.replaceChild(placeholder, dominoElement); document.body.appendChild(dominoElement); }
+            else { console.error("Element parent mismatch", dominoElement, sourceContainer); dominoElement.remove(); if (onCompleteCallback) onCompleteCallback(); return; }
+            dominoElement.style.transition = `transform ${DEAL_ANIMATION_DURATION}ms ease-in, opacity ${DEAL_ANIMATION_DURATION}ms ease-in`;
+            requestAnimationFrame(() => {
+                dominoElement.style.position = 'fixed'; dominoElement.style.left = `${startRect.left}px`; dominoElement.style.top = `${startRect.top}px`;
+                dominoElement.style.zIndex = '150'; dominoElement.style.opacity = '1'; dominoElement.style.transform = 'translate(0, 0)';
+                dominoElement.offsetHeight; // Force reflow
+                dominoElement.style.transform = `translate(${targetX}px, ${targetY}px)`; dominoElement.style.opacity = '0';
+            });
+            setTimeout(() => { dominoElement.remove(); if (onCompleteCallback) onCompleteCallback(); }, DEAL_ANIMATION_DURATION + DEAL_ANIMATION_DELAY);
+        }
+
+        /** Initiates dealing the remaining boneyard dominoes to AI players. */
+        function dealRemainingToAI() {
+            displayGameMessage('Dealing to opponents...', false);
+            const remainingElements = Array.from(playAreaDisplay.querySelectorAll('.domino'));
+            const dataToDeal = boneyardDominoes.filter(d => d !== null);
+            const elementsToAnimate = remainingElements.filter(el => dataToDeal.find(d=> d && d.id === el.id));
+            elementsToAnimate.forEach(el => { el.draggable = false; el.style.cursor = 'default'; });
+            const placeholders = Array.from(playAreaDisplay.querySelectorAll('.domino-placeholder'));
+            placeholders.forEach(p => { p.draggable = false; p.style.cursor = 'default'; });
+            nextAiPlayerIndex = 1;
+            runAiDealStep([...elementsToAnimate], dataToDeal);
+        }
+
+        /** Handles one step of the AI dealing animation sequence. */
+        function runAiDealStep(elements, dataPool) {
+            if (elements.length === 0 || dataPool.length === 0) { finishAIDealAndSetState(); return; }
+            const randomIndex = Math.floor(Math.random() * elements.length); const el = elements.splice(randomIndex, 1)[0];
+            const dataIndex = dataPool.findIndex(d => d && d.id === el.id);
+            if (dataIndex === -1) { console.error("Cannot find data for AI domino:", el.id); runAiDealStep(elements, dataPool); return; }
+            const dominoData = dataPool.splice(dataIndex, 1)[0];
+            const boneyardIndex = boneyardDominoes.findIndex(d => d && d.id === dominoData.id);
+            if (boneyardIndex > -1) { boneyardDominoes[boneyardIndex] = null; } else { console.warn("Could not find boneyard index for AI domino:", dominoData.id); }
+            const targetPlayerIndex = nextAiPlayerIndex; playerHands[targetPlayerIndex].push(dominoData);
+            const targetContainer = opponentContainers[targetPlayerIndex]; const targetDisplay = targetContainer?.querySelector('.domino-display');
+            nextAiPlayerIndex = (nextAiPlayerIndex === 1) ? 3 : (nextAiPlayerIndex === 3 ? 2 : 1);
+            if (!targetContainer || !targetDisplay) { console.error("Target container/display not found for AI:", targetPlayerIndex); runAiDealStep(elements, dataPool); return; }
+            const onAiDealComplete = () => { const ph = document.createElement('div'); ph.className = 'domino domino-small'; targetDisplay.appendChild(ph); runAiDealStep(elements, dataPool); };
+            animateDominoMove(el, playAreaDisplay, targetContainer, onAiDealComplete);
+        }
+
+        /** Cleans up after AI dealing and sets state to BIDDING. */
+        function finishAIDealAndSetState() {
+            playAreaDisplay.innerHTML = ''; // Clear play area
+            renderOpponentHands();
+            setGameState('BIDDING');
+        }
+
+        /** Kicks off the bidding phase */
+        function startBiddingPhase() {
+            biddingActionsContainer.innerHTML = '';
+            infoMessageElement.classList.remove('draw-message');
+            infoMessageElement.innerHTML = `
+                <div class="bid-log-table">
+                    <div class="label">${playerNames[0]}:</div>       <div class="value" id="bid-log-0">--</div>
+                    <div class="label">${playerNames[1]}:</div>       <div class="value" id="bid-log-1">--</div>
+                    <div class="label">${playerNames[2]}:</div>   <div class="value" id="bid-log-2">--</div>
+                    <div class="label">${playerNames[3]}:</div>       <div class="value" id="bid-log-3">--</div>
+                </div>
+            `;
+            updateGameStatusInfo('Bidding...');
+            triggerNextTurn();
+        }
+
+        /** Determines if it's player's or AI's turn and initiates it */
+        function triggerNextTurn() {
+            const playerIndex = currentHandState.currentPlayerIndex;
+            updateCurrentPlayerIndicator(playerIndex);
+            if (playerIndex === 0) promptPlayerBid(); else initiateAiBidTurn(playerIndex);
+        }
+
+        /** Displays bidding options for the human player */
+        function promptPlayerBid() {
+            biddingActionsContainer.innerHTML = '';
+            bidPopupButtonsContainer.innerHTML = '';
+            hideBidPopup();
+
+            const isForcedBid = currentHandState.bidsMadeThisRound === 3 && currentHandState.currentBid === 0;
+            const minNumericBid = isForcedBid ? MIN_BID : Math.max(MIN_BID, currentHandState.currentBid + 1);
+            const canBidNumerically = minNumericBid <= MAX_STANDARD_BID;
+            const canBidOneMark = ONE_MARK >= minNumericBid;
+            const canBidTwoMarks = TWO_MARKS > currentHandState.currentBid || isForcedBid;
+
+            let hasPopupButtons = false;
+            for (let bid = minNumericBid + 1; bid < MAX_STANDARD_BID; bid++) { // Up to 41
+                const button = document.createElement('button');
+                button.textContent = bid;
+                button.classList.add('bg-blue-500', 'hover:bg-blue-700', 'text-white', 'font-bold', 'py-1', 'px-2', 'rounded', 'text-sm');
+                button.onclick = () => { handlePlayerBid(0, { type: 'bid', amount: bid }); hideBidPopup(); };
+                bidPopupButtonsContainer.appendChild(button);
+                hasPopupButtons = true;
+            }
+
+            // --- Create Direct Buttons ---
+            if (canBidNumerically) {
+                const button = document.createElement('button');
+                button.textContent = getBidDisplayString(minNumericBid);
+                button.classList.add('bg-blue-500', 'hover:bg-blue-700', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1');
+                button.onclick = () => handlePlayerBid(0, { type: 'bid', amount: minNumericBid });
+                biddingActionsContainer.appendChild(button);
+            }
+
+            if (hasPopupButtons && minNumericBid < MAX_STANDARD_BID) {
+                const button = document.createElement('button');
+                button.id = 'more-bids-button';
+                button.textContent = '...';
+                button.classList.add('bg-blue-400', 'hover:bg-blue-600', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1');
+                button.onclick = () => showBidPopup();
+                biddingActionsContainer.appendChild(button);
+            }
+
+            if (canBidOneMark && minNumericBid < ONE_MARK) {
+                const button = document.createElement('button');
+                button.textContent = getBidDisplayString(ONE_MARK);
+                button.classList.add('bg-green-600', 'hover:bg-green-800', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1');
+                button.onclick = () => handlePlayerBid(0, { type: 'bid', amount: ONE_MARK });
+                biddingActionsContainer.appendChild(button);
+            }
+
+            if (canBidTwoMarks) {
+                const button = document.createElement('button');
+                button.textContent = getBidDisplayString(TWO_MARKS);
+                button.classList.add('bg-green-600', 'hover:bg-green-800', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1'); // Same color
+                button.onclick = () => handlePlayerBid(0, { type: 'bid', amount: TWO_MARKS });
+                biddingActionsContainer.appendChild(button);
+            }
+
+             if (!isForcedBid) {
+                const passButton = document.createElement('button');
+                passButton.textContent = 'Pass';
+                passButton.classList.add('bg-gray-500', 'hover:bg-gray-700', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mb-1');
+                passButton.onclick = () => handlePlayerBid(0, { type: 'pass' });
+                biddingActionsContainer.appendChild(passButton);
+             }
+        }
+
+        /** Shows the popup with more bid options */
+        function showBidPopup() {
+            if (!bidPopupElement || !popupOverlay) return;
+            const anchor = document.getElementById('more-bids-button') || biddingActionsContainer;
+            const rect = anchor.getBoundingClientRect();
+            bidPopupElement.style.left = `${rect.left + rect.width / 2}px`;
+            bidPopupElement.style.top = `${rect.top - 5}px`;
+            bidPopupElement.style.transform = 'translate(-50%, -100%)';
+            bidPopupElement.style.display = 'block';
+            popupOverlay.style.display = 'block';
+        }
+
+        /** Hides the bid popup and overlay */
+        function hideBidPopup() {
+            if (bidPopupElement) bidPopupElement.style.display = 'none';
+            if (popupOverlay) popupOverlay.style.display = 'none';
+        }
+
+        /** Simulates an AI player's bidding turn after a delay */
+        function initiateAiBidTurn(aiPlayerIndex) {
+            biddingActionsContainer.innerHTML = ''; // Clear buttons during AI turn
+            setTimeout(() => {
+                let action; const isLastBidder = currentHandState.bidsMadeThisRound === 3; const noBidsYet = currentHandState.currentBid === 0;
+                if (isLastBidder && noBidsYet) action = { type: 'bid', amount: MIN_BID }; else action = { type: 'pass' };
+                handlePlayerBid(aiPlayerIndex, action);
+            }, AI_THINKING_TIME);
+        }
+
+        /** Processes a bid or pass action from any player. */
+        function handlePlayerBid(playerIndex, action) {
+            if (gameState !== 'BIDDING') return;
+            hideBidPopup();
+            currentHandState.bidsMadeThisRound++;
+            let bidLogValue = "";
+            if (action.type === 'pass') { bidLogValue = "Pass"; }
+            else if (action.type === 'bid') {
+                currentHandState.currentBid = action.amount;
+                currentHandState.highestBidderIndex = playerIndex;
+                bidLogValue = getBidDisplayString(action.amount);
+                updateGameStatusInfo(`Current Bid: ${bidLogValue} by ${playerNames[playerIndex]}`);
+            }
+            const bidLogCell = document.getElementById(`bid-log-${playerIndex}`);
+            if (bidLogCell) { bidLogCell.textContent = bidLogValue; bidLogCell.style.fontStyle = 'normal'; }
+            if (currentHandState.bidsMadeThisRound === 4) endBiddingPhase();
+            else { currentHandState.currentPlayerIndex = (currentHandState.dealerIndex + 1 + currentHandState.bidsMadeThisRound) % PLAYER_COUNT; triggerNextTurn(); }
+        }
+
+        /** Finalizes the bidding phase and transitions state */
+        function endBiddingPhase() {
+             biddingActionsContainer.innerHTML = ''; hideBidPopup();
+            if (currentHandState.highestBidderIndex === -1) {
+                for (let i=0; i<PLAYER_COUNT; i++){ const cell = document.getElementById(`bid-log-${i}`); if (cell && cell.textContent === '--') { cell.textContent = 'Pass'; cell.style.fontStyle = 'normal'; } }
+                updateGameStatusInfo("All Pass - Redealing...");
+                updateCurrentPlayerIndicator(-1);
+                setTimeout(setupNewHand, 1500);
+            } else {
+                currentHandState.bidWinnerIndex = currentHandState.highestBidderIndex; currentHandState.winningBid = currentHandState.currentBid;
+                const bidString = getBidDisplayString(currentHandState.winningBid);
+                const winnerMsg = `Bid: ${bidString} by ${playerNames[currentHandState.bidWinnerIndex]}.`;
+                updateGameStatusInfo(winnerMsg);
+                currentHandState.currentPlayerIndex = currentHandState.bidWinnerIndex; // Set for trump choice
+                setGameState('CHOOSE_TRUMP');
+            }
+        }
+
+        /** Starts the trump selection process */
+        function initiateTrumpChoice() {
+            updateCurrentPlayerIndicator(currentHandState.bidWinnerIndex); // Highlight winner
+            const winnerIndex = currentHandState.bidWinnerIndex;
+            if (winnerIndex === 0) { // Human player chooses
+                promptPlayerTrumpChoice();
+            } else { // AI chooses
+                initiateAiTrumpChoice(winnerIndex);
+            }
+        }
+
+        /** Displays trump selection options for the human player */
+        function promptPlayerTrumpChoice() {
+            displayGameMessage('Choose Trump Suit:', false); // Show prompt in info area
+            trumpActionsContainer.innerHTML = ''; // Clear previous content
+
+            // Create buttons for suits 0-6
+            for (let i = 0; i <= 6; i++) {
+                const button = document.createElement('button');
+                button.textContent = SUIT_NAMES[i];
+                button.classList.add('bg-indigo-500', 'hover:bg-indigo-700', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1');
+                button.onclick = () => handleTrumpChoice(i);
+                trumpActionsContainer.appendChild(button);
+            }
+            // Nello Button (-1) only if bid was a Mark bid (42+)
+            if (currentHandState.winningBid >= ONE_MARK) {
+                const nelloButton = document.createElement('button');
+                nelloButton.textContent = "Nello";
+                nelloButton.classList.add('bg-red-600', 'hover:bg-red-800', 'text-white', 'font-bold', 'py-1', 'px-3', 'rounded', 'mr-1', 'mb-1');
+                nelloButton.onclick = () => handleTrumpChoice(-1); // Use -1 for Nello
+                trumpActionsContainer.appendChild(nelloButton);
+            }
+        }
+
+        /** Simulates an AI player choosing trump */
+        function initiateAiTrumpChoice(aiPlayerIndex) {
+            displayGameMessage(`${playerNames[aiPlayerIndex]} is choosing trump...`, false);
+            trumpActionsContainer.innerHTML = ''; // Clear area
+
+            setTimeout(() => {
+                // Simple AI: Always choose 6s for now
+                handleTrumpChoice(6);
+            }, AI_THINKING_TIME);
+        }
+
+        /** Processes the chosen trump and starts the play phase */
+        function handleTrumpChoice(suitIndex) {
+            currentHandState.trumpSuit = suitIndex;
+            const trumpDisplay = suitIndex === -1 ? "Nello" : `${SUIT_NAMES[suitIndex]}`;
+            const bidString = getBidDisplayString(currentHandState.winningBid);
+            updateGameStatusInfo(`Bid: ${bidString} by ${playerNames[currentHandState.bidWinnerIndex]} (Trump: ${trumpDisplay})`);
+
+            // Set leader and current player for the first trick
+            currentHandState.leadPlayerIndex = currentHandState.bidWinnerIndex;
+            currentHandState.currentPlayerIndex = currentHandState.bidWinnerIndex;
+
+            setGameState('PLAYING'); // Transition to play
+        }
+
+        /** Starts the playing phase */
+        function startPlayingPhase() {
+            // Status already updated in handleTrumpChoice
+            updateCurrentPlayerIndicator(currentHandState.currentPlayerIndex); // Highlight leader
+            triggerNextPlayTurn(); // Start the first play turn
+        }
+
+         /** Determines if bidder made contract */
+         function didBidderMakeContract() {
+            const bidWinnerTeam = currentHandState.bidWinnerIndex % 2;
+            const bidAmount = currentHandState.winningBid;
+            // Mark bids (42+) require all 42 points. Numeric bids require >= bid amount.
+            const pointsNeeded = (bidAmount >= ONE_MARK) ? 42 : bidAmount;
+            const pointsMade = currentHandState.pointsTaken[bidWinnerTeam];
+            return pointsMade >= pointsNeeded;
+        }
+
+        /** Starts the scoring phase after a hand is complete */
+        function startScoringPhase() {
+            updateCurrentPlayerIndicator(-1); // Clear highlight
+            const bidderMadeContract = didBidderMakeContract();
+            const bidWinner = currentHandState.bidWinnerIndex;
+            const bidWinnerTeam = bidWinner % 2;
+            const bidAmount = currentHandState.winningBid;
+
+            // let scoringMessage = ""; // Message no longer shown in info area
+            let marksAwarded = (bidAmount >= TWO_MARKS) ? 2 : 1; // Simple marks logic
+            let scoringTeamIndex = -1;
+            let outcomeString = ""; // String to append to top status
+
+            if (bidderMadeContract) {
+                // scoringMessage = `${playerNames[bidWinner]} made the bid! (+${marksAwarded} Mark)`; // Removed
+                outcomeString = " - Made!";
+                scoringTeamIndex = bidWinnerTeam;
+            } else {
+                // scoringMessage = `${playerNames[bidWinner]}'s team set! (+${marksAwarded} Mark)`; // Removed
+                 outcomeString = " - Set!";
+                scoringTeamIndex = (bidWinnerTeam + 1) % 2; // Opposing team gets the marks
+            }
+
+            if (scoringTeamIndex !== -1) {
+                scores[scoringTeamIndex] += marksAwarded;
+            }
+
+            // displayGameMessage(scoringMessage, false); // REMOVED
+            updateScoreDisplay(); // Update top scoreboard
+
+            // Update top status bar by appending made/set info
+            const currentStatus = gameStatusInfoElement.textContent; // Get existing bid/trump info
+            updateGameStatusInfo(currentStatus + outcomeString); // Append result
+
+            // TODO: Check for game over (e.g., score >= 7)
+        }
+
+        // --- Domino Generation ---
+        function createDominoSet() { const set = []; for (let i = 0; i <= 6; i++) for (let j = i; j <= 6; j++) set.push({ id: `domino-${i}-${j}`, pips1: i, pips2: j, element: null }); return set; }
+        function shuffleArray(array) { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } }
+        function createPipElement() { const pip = document.createElement('div'); pip.classList.add('pip'); return pip; }
+        function createPips(container, count) { try { if (!container) return; container.innerHTML = ''; let sc = ''; if (container.classList.contains('left-pips')) sc = 'left-pips'; else if (container.classList.contains('right-pips')) sc = 'right-pips'; container.className = 'pip-container'; if (sc) container.classList.add(sc); container.classList.add(`pips-${count}`); container.dataset.pipCount = count; for (let i = 0; i < count; i++) container.appendChild(createPipElement()); } catch (e) { console.error("Error in createPips:", e, container, count); } }
+        function renderDomino(dominoData, isFaceUp = false, size = 'normal') {
+            const el = document.createElement('div'); el.id = dominoData.id; el.dataset.pips1 = dominoData.pips1; el.dataset.pips2 = dominoData.pips2; el.dataset.flipped = "false"; const inner = document.createElement('div'); inner.classList.add('domino-inner'); const face = document.createElement('div'); face.classList.add('domino-face'); const lp = document.createElement('div'); lp.classList.add('left-pips'); const d = document.createElement('div'); d.classList.add('divider'); const rp = document.createElement('div'); rp.classList.add('right-pips'); face.appendChild(lp); face.appendChild(d); face.appendChild(rp); inner.appendChild(face); el.appendChild(inner);
+            // Add listeners only for player's hand dominoes (size === 'normal')
+            if (size === 'normal') {
+                el.addEventListener('dragstart', handleDragStart);
+                el.addEventListener('dragend', handleDragEnd);
+                el.addEventListener('click', handleDominoClick); // Handles flip OR play
+            }
+            dominoData.element = el; el.className = 'domino'; if (size === 'small') el.classList.add('domino-small'); if (size === 'tiny') el.classList.add('domino-tiny'); if (size === 'micro') el.classList.add('domino-micro'); /* Add micro class */ const p1 = parseInt(el.dataset.pips1); const p2 = parseInt(el.dataset.pips2); const isFlipped = el.dataset.flipped === "true"; createPips(el.querySelector('.left-pips'), isFlipped ? p2 : p1); createPips(el.querySelector('.right-pips'), isFlipped ? p1 : p2); const iEl = el.querySelector('.domino-inner'); if (isFaceUp) { el.classList.add('face-up'); if(iEl) iEl.style.display = 'block'; el.style.cursor = 'pointer'; el.draggable = true; } else { el.classList.remove('face-up'); if(iEl) iEl.style.display = 'none'; el.style.cursor = 'default'; el.draggable = false; } el.style.position = 'relative'; el.style.left = ''; el.style.top = ''; el.style.transform = ''; el.style.opacity = ''; el.style.zIndex = ''; el.style.transition = ''; el.style.visibility = ''; return el;
+        }
+
+        // --- Hand Rendering ---
+        function renderPlayerHand() { clearHandDisplay(); if (playerHands[0].length > 0) { let tr = playerHandDisplay.querySelector('.hand-row'); if (!tr) { tr = createHandRow(); playerHandDisplay.appendChild(tr); } playerHands[0].forEach(dd => { const de = renderDomino(dd, true, 'normal'); tr.appendChild(de); }); } updateHandPadding(); }
+        function renderOpponentHands() { for (let i = 1; i <= 3; i++) { const d = opponentDisplays[i]; if (d) { d.innerHTML = ''; playerHands[i].forEach(dd => { const de = renderDomino(dd, false, 'small'); de.draggable = false; d.appendChild(de); }); } } }
+        function clearHandDisplay() { playerHandDisplay.querySelectorAll('.hand-row').forEach(r => playerHandDisplay.removeChild(r)); }
+
+        // --- Row Management ---
+        function createHandRow() { const rd = document.createElement('div'); rd.classList.add('hand-row'); return rd; }
+        function removeEmptyRows() { let rr = false; const rows = playerHandDisplay.querySelectorAll('.hand-row'); rows.forEach(r => { if (!r.querySelector('.domino')) { playerHandDisplay.removeChild(r); rr = true; } }); if (rr) updateHandPadding(); }
+        function getHandRowCount() { return playerHandDisplay.querySelectorAll('.hand-row').length; }
+        function updateHandPadding() { const rc = getHandRowCount(); if (rc < MAX_ROWS) playerHandDisplay.classList.add('hand-extra-padding'); else playerHandDisplay.classList.remove('hand-extra-padding'); }
+
+        // --- Drag and Drop Logic ---
+        function handleDragStart(event) {
+            const td = event.target.closest('.domino'); if (!td) { event.preventDefault(); return; }
+            const cbd = gameState === 'DRAWING' && td.parentElement === playAreaDisplay;
+            const cfh = td.closest('#player-hand-area');
+            const cph = gameState === 'PLAYING' && cfh && currentHandState.currentPlayerIndex === 0;
+            const canRearrange = cfh && (gameState === 'DRAWING' || gameState === 'BIDDING' || gameState === 'CHOOSE_TRUMP');
+
+            // Reset flag
+            isDraggingFromBoneyard = false; // Reset at the start
+
+            if (cbd || cph || canRearrange) {
+                if (cbd && playerHands[0].length >= HAND_SIZE) { showMessage(`Hand full!`); event.preventDefault(); return; }
+
+                // Set flag if dragging from boneyard
+                if (cbd) {
+                     isDraggingFromBoneyard = true;
+                }
+
+                draggedDomino = td;
+                if (cbd) draggedDominoData = boneyardDominoes.find(d => d && d.id === draggedDomino.id);
+                else draggedDominoData = findDominoDataById(playerHands[0], draggedDomino.id);
+
+                if (!draggedDominoData) { console.error("No data for dragged:", draggedDomino.id); event.preventDefault(); draggedDomino = null; return; }
+
+                setTimeout(() => { if(draggedDomino) draggedDomino.classList.add('dragging'); }, 0);
+                event.dataTransfer.setData('text/plain', event.target.id);
+                event.dataTransfer.effectAllowed = 'move';
+            } else {
+                event.preventDefault(); // Prevent drag if not allowed source/state
+            }
+        }
+        function handleDragEnd(event) {
+            if (draggedDomino) draggedDomino.classList.remove('dragging');
+            clearInsertionMarkers();
+            draggedDomino = null;
+            draggedDominoData = null;
+            currentInsertBeforeElement = null;
+            currentInsertAfterElement = null;
+            currentTargetRow = null;
+            canCreateRow = false;
+            isDraggingFromBoneyard = false; // Reset flag here
+        }
+        function handleDragOverPlayerHand(event) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; if (!draggedDomino) { event.dataTransfer.dropEffect = 'none'; return; } clearInsertionMarkers(); let isNew=false; let tr=null; let ib=null; let ia=null; const rows = Array.from(playerHandDisplay.querySelectorAll('.hand-row')); tr = rows.find(r => { const rect = r.getBoundingClientRect(); return event.clientY >= rect.top && event.clientY < rect.bottom; }); const fp = draggedDominoData && !playerHands[0].find(d => d.id === draggedDominoData.id); if (tr) { const sibs = Array.from(tr.querySelectorAll('.domino:not(.dragging)')); let fip = false; for (const sib of sibs) { const rect = sib.getBoundingClientRect(); if (event.clientX < rect.left + rect.width / 2) { sib.classList.add('insertion-marker'); ib = sib; fip = true; break; } } if (!fip) { const last = sibs[sibs.length - 1]; if (last) { const lr = last.getBoundingClientRect(); if (event.clientX > lr.left + lr.width / 2) { last.classList.add('insertion-marker-after-last'); ia = last; } else { last.classList.add('insertion-marker'); ib = last; } } } } else { const lastR = rows[rows.length - 1]; const hr = playerHandDisplay.getBoundingClientRect(); const iblr = lastR ? (event.clientY > lastR.getBoundingClientRect().bottom && event.clientY < hr.bottom) : (event.clientY > hr.top && event.clientY < hr.bottom); if (iblr && getHandRowCount() < MAX_ROWS) { isNew = true; if(lastR) lastR.classList.add('new-row-marker-below'); } else if (fp && iblr && gameState === 'DRAWING') { /* Allow drop from pile */ } else if (!fp && iblr) { /* Allow drop within hand */ } else { event.dataTransfer.dropEffect = 'none'; } } currentTargetRow = tr; currentInsertBeforeElement = ib; currentInsertAfterElement = ia; canCreateRow = isNew; }
+        function handleDragOverPile(event) { event.preventDefault(); if (gameState === 'PLAYING' && currentHandState.currentPlayerIndex === 0 && draggedDominoData && playerHands[0].includes(draggedDominoData)) { event.dataTransfer.dropEffect = 'move'; } else { event.dataTransfer.dropEffect = 'none'; } clearInsertionMarkers(); }
+        function handleDragLeavePlayerHand(event) { if (!playerHandDisplay.contains(event.relatedTarget) && draggedDomino) { clearInsertionMarkers(); canCreateRow = false; currentTargetRow = null; currentInsertBeforeElement = null; currentInsertAfterElement = null; } }
+        function handleDropPlayerHand(event) { // Handles drops ONLY within the player hand area (rearranging or drawing)
+            event.preventDefault();
+            // REMOVED incorrect delegation check
+
+            const droppedElement = draggedDomino;
+            const droppedData = draggedDominoData;
+            const dropTargetRow = currentTargetRow;
+            const dropInsertBefore = currentInsertBeforeElement;
+            const dropInsertAfter = currentInsertAfterElement;
+            const dropCanCreateRow = canCreateRow;
+            clearInsertionMarkers();
+
+            if (!droppedElement || !droppedData) { console.error("Drop fail"); draggedDomino = null; draggedDominoData = null; currentInsertBeforeElement = null; currentInsertAfterElement = null; currentTargetRow = null; canCreateRow = false; return; }
+
+            const sourceRow = droppedElement.parentElement?.classList.contains('hand-row') ? droppedElement.parentElement : null;
+            const isDraggingFromBoneyardFlag = isDraggingFromBoneyard; // Use the flag set in dragstart
+
+            let rowAdded = false;
+
+            if (isDraggingFromBoneyardFlag && gameState === 'DRAWING') { // Dropping from Boneyard during DRAWING
+                if (playerHands[0].length >= HAND_SIZE) { /* Handled in dragStart */ }
+                else { const idx = boneyardDominoes.findIndex(d => d && d.id === droppedData.id); if (idx > -1) { boneyardDominoes[idx] = null; } else { console.error("Cannot find boneyard data:", droppedData.id); /* Abort */ if (draggedDomino) draggedDomino.classList.remove('dragging'); draggedDomino = null; draggedDominoData = null; currentInsertBeforeElement = null; currentInsertAfterElement = null; currentTargetRow = null; canCreateRow = false; return; } playerHands[0].push(droppedData); if (dropCanCreateRow && getHandRowCount() < MAX_ROWS) { const nr = createHandRow(); nr.appendChild(droppedElement); playerHandDisplay.appendChild(nr); rowAdded = true; updateHandPadding(); } else if (dropTargetRow) { if (dropInsertBefore) dropTargetRow.insertBefore(droppedElement, dropInsertBefore); else if (dropInsertAfter) dropTargetRow.insertBefore(droppedElement, dropInsertAfter.nextSibling); else dropTargetRow.appendChild(droppedElement); } else { let trfd = playerHandDisplay.querySelector('.hand-row:last-child'); if (!trfd) { trfd = createHandRow(); playerHandDisplay.appendChild(trfd); rowAdded = true; updateHandPadding(); } trfd.appendChild(droppedElement); } updateDominoAfterDrop(droppedElement); renderBoneyard(); updatePlayerHandDataOrder(); if (playerHands[0].length === HAND_SIZE) triggerAIDealAndBidding(); else displayGameMessage(`Draw ${HAND_SIZE - playerHands[0].length} more dominoes.`); }
+            } else if (sourceRow) { // Dropping from within Hand (Rearranging) - Allow in multiple states
+                if (dropCanCreateRow && getHandRowCount() < MAX_ROWS) { const nr = createHandRow(); nr.appendChild(droppedElement); playerHandDisplay.appendChild(nr); removeEmptyRows(); rowAdded = true; updateDominoAfterDrop(droppedElement); }
+                else if (dropTargetRow) { if (dropInsertBefore) dropTargetRow.insertBefore(droppedElement, dropInsertBefore); else if (dropInsertAfter) dropTargetRow.insertBefore(droppedElement, dropInsertAfter.nextSibling); else dropTargetRow.appendChild(droppedElement); if (sourceRow !== dropTargetRow) { removeEmptyRows(); rowAdded = true; } updateDominoAfterDrop(droppedElement); }
+                updatePlayerHandDataOrder(); // Update order after any rearrangement
+            } else { console.error("Drop Invalid source/target."); }
+            // Cleanup moved to handleDragEnd
+        }
+        /** Handles the drop event onto the play area. */
+        function handleDropPlayArea(event) { event.preventDefault(); if (gameState !== 'PLAYING' || currentHandState.currentPlayerIndex !== 0 || !draggedDominoData) { if (draggedDomino) draggedDomino.classList.remove('dragging'); draggedDomino = null; draggedDominoData = null; return; } const droppedData = draggedDominoData; const droppedElement = draggedDomino; const legalMovesResult = getLegalMoves(0); const moveInfo = legalMovesResult.find(m => m.dominoData.id === droppedData.id); if (!moveInfo || !moveInfo.isLegal) { const reason = moveInfo ? moveInfo.reason : "Invalid move."; showMessage(reason); if (draggedDomino) draggedDomino.classList.remove('dragging'); draggedDomino = null; draggedDominoData = null; return; } const handIndex = playerHands[0].findIndex(d => d.id === droppedData.id); if (handIndex > -1) playerHands[0].splice(handIndex, 1); currentHandState.currentTrick.push({ dominoData: droppedData, playerIndex: 0 });
+            // Clear placeholder if first domino
+            if (currentHandState.currentTrick.length === 1) playAreaDisplay.innerHTML = '';
+            droppedElement.remove(); const playedDominoElement = renderDomino(droppedData, true, 'normal'); playedDominoElement.dataset.playerIndex = 0; /* Add player index */ playAreaDisplay.appendChild(playedDominoElement); renderPlayerHandWithLegality(); handlePlayComplete(0); if (draggedDomino && draggedDomino.classList.contains('dragging')) draggedDomino.classList.remove('dragging'); draggedDomino = null; draggedDominoData = null; }
+        /** Handles clicking on a domino in the boneyard to draw it. */
+        function handleBoneyardClick(event) { if (gameState !== 'DRAWING') return; const clickedElement = event.target.closest('.domino'); if (!clickedElement) return; if (playerHands[0].length >= HAND_SIZE) { showMessage(`Hand full!`); return; } const dominoData = boneyardDominoes.find(d => d && d.id === clickedElement.id); if (!dominoData) { console.error("No data for clicked:", clickedElement.id); return; } const boneyardIndex = boneyardDominoes.findIndex(d => d && d.id === dominoData.id); if (boneyardIndex > -1) boneyardDominoes[boneyardIndex] = null; else { console.error("Clicked data not found in boneyard?:", dominoData.id); return; } playerHands[0].push(dominoData); clickedElement.draggable = false; clickedElement.style.cursor = 'default'; const onPlayerDrawComplete = () => { let tr = playerHandDisplay.querySelector('.hand-row:last-child'); if (!tr) { tr = createHandRow(); playerHandDisplay.appendChild(tr); } const nhd = renderDomino(dominoData, true, 'normal'); tr.appendChild(nhd); updatePlayerHandDataOrder(); updateHandPadding(); if (playerHands[0].length === HAND_SIZE) triggerAIDealAndBidding(); else displayGameMessage(`Draw ${HAND_SIZE - playerHands[0].length} more dominoes.`); }; animateDominoMove(clickedElement, playAreaDisplay, playerHandDisplay, onPlayerDrawComplete); }
+
+        /** Called when the player has drawn their 7th domino. Starts the AI dealing process. */
+        function triggerAIDealAndBidding() { displayGameMessage('Dealing to opponents...', false); const rbe = Array.from(playAreaDisplay.querySelectorAll('.domino')); rbe.forEach(el => { el.draggable = false; el.style.cursor = 'default'; }); const phs = Array.from(playAreaDisplay.querySelectorAll('.domino-placeholder')); phs.forEach(p => { p.draggable = false; p.style.cursor = 'default'; }); nextAiPlayerIndex = 1; const dtd = boneyardDominoes.filter(d => d !== null); const cbe = Array.from(playAreaDisplay.querySelectorAll('.domino')); const eta = [...cbe.filter(el => dtd.find(d=>d && d.id === el.id))]; runAiDealStep(eta, dtd); }
+
+        /** Updates the playerHands[0] array to match the order of dominoes in the DOM. */
+        function updatePlayerHandDataOrder() { const uh = []; playerHandDisplay.querySelectorAll('.hand-row .domino').forEach(de => { let dd = null; for (const h of playerHands) { dd = findDominoDataById(h, de.id); if (dd) break; } if (!dd) dd = boneyardDominoes.find(d => d && d.id === de.id); if (dd && playerHands[0].includes(dd)) uh.push(dd); else if (playerHands[0].map(d=>d.id).includes(de.id)) { console.warn("Mismatch:", de.id); let fd = null; for (const h of playerHands) { fd = findDominoDataById(h, de.id); if (fd) break; } if(!fd) fd = boneyardDominoes.find(d => d && d.id === de.id); if(fd) uh.push(fd); } }); playerHands[0] = uh; }
+        /** Finds a domino data object in a specific hand array by its ID. */
+        function findDominoDataById(handArray, id) { return handArray ? handArray.find(d => d && d.id === id) : null; }
+        /** Updates the appearance and properties of a domino element after it's dropped/placed in hand. */
+        function updateDominoAfterDrop(dominoElement) { if (!dominoElement) return; dominoElement.classList.remove('domino-small'); dominoElement.classList.add('face-up'); const inner = dominoElement.querySelector('.domino-inner'); if(inner) inner.style.display = 'block'; dominoElement.style.cursor = 'pointer'; dominoElement.draggable = true; dominoElement.removeEventListener('click', handleDominoClick); dominoElement.addEventListener('click', handleDominoClick); dominoElement.removeEventListener('dragstart', handleDragStart); dominoElement.addEventListener('dragstart', handleDragStart); dominoElement.removeEventListener('dragend', handleDragEnd); dominoElement.addEventListener('dragend', handleDragEnd); }
+        /** Removes all insertion marker classes from dominoes in the player hand. */
+        function clearInsertionMarkers() { const ms = playerHandDisplay.querySelectorAll('.insertion-marker, .insertion-marker-after-last'); ms.forEach(m => { if (m && m.classList) m.classList.remove('insertion-marker', 'insertion-marker-after-last'); }); const bm = playerHandDisplay.querySelector('.new-row-marker-below'); if (bm) bm.classList.remove('new-row-marker-below'); }
+
+        // Add necessary drag/drop listeners to the player hand area AND play area
+        playerHandDisplay.addEventListener('dragover', handleDragOverPlayerHand);
+        playerHandDisplay.addEventListener('drop', handleDropPlayerHand); // Handles drops within hand
+        playerHandDisplay.addEventListener('dragleave', handleDragLeavePlayerHand);
+        playAreaDisplay.addEventListener('dragover', handleDragOverPile); // Handles drag over play area
+        playAreaDisplay.addEventListener('drop', handleDropPlayArea); // Handles drops ONTO play area
+        playAreaDisplay.addEventListener('click', handleBoneyardClick); // Handles click draw
+
+        // --- Domino Click Handler (180 Flip / Play) ---
+        function handleDominoClick(event) {
+            const clickedDominoElement = event.currentTarget;
+            if (!clickedDominoElement) return;
+
+            // Handle Play Click
+            if (gameState === 'PLAYING' && currentHandState.currentPlayerIndex === 0 && clickedDominoElement.closest('#player-hand-area')) {
+                const dominoData = findDominoDataById(playerHands[0], clickedDominoElement.id);
+                if (!dominoData) return;
+                const legalMovesResult = getLegalMoves(0);
+                const moveInfo = legalMovesResult.find(m => m.dominoData.id === dominoData.id);
+                if (!moveInfo || !moveInfo.isLegal) { showMessage(moveInfo ? moveInfo.reason : "Invalid move."); return; }
+                const handIndex = playerHands[0].findIndex(d => d.id === dominoData.id);
+                if (handIndex > -1) playerHands[0].splice(handIndex, 1);
+                currentHandState.currentTrick.push({ dominoData: dominoData, playerIndex: 0 });
+                 // Clear placeholder if first domino
+                if (currentHandState.currentTrick.length === 1) playAreaDisplay.innerHTML = '';
+                clickedDominoElement.remove();
+                const playedDominoElement = renderDomino(dominoData, true, 'normal');
+                playedDominoElement.dataset.playerIndex = 0; // Add player index
+                playAreaDisplay.appendChild(playedDominoElement);
+                renderPlayerHandWithLegality();
+                handlePlayComplete(0);
+                return;
+            }
+
+            // Handle 180 Flip Click
+            if (clickedDominoElement.parentElement?.classList.contains('hand-row')) {
+                const isFlipped = clickedDominoElement.dataset.flipped === "true";
+                const p1 = parseInt(clickedDominoElement.dataset.pips1 || "0"); const p2 = parseInt(clickedDominoElement.dataset.pips2 || "0");
+                const lpc = clickedDominoElement.querySelector('.left-pips'); const rpc = clickedDominoElement.querySelector('.right-pips');
+                if (!lpc || !rpc) { console.error("Pip containers not found:", clickedDominoElement.id); return; }
+                if (isFlipped) { createPips(lpc, p1); createPips(rpc, p2); clickedDominoElement.dataset.flipped = "false"; }
+                else { createPips(lpc, p2); createPips(rpc, p1); clickedDominoElement.dataset.flipped = "true"; }
+                clickedDominoElement.classList.add('flipping');
+                setTimeout(() => { if (clickedDominoElement) clickedDominoElement.classList.remove('flipping'); }, 150);
+            }
+        }
+
+        // --- Utility Functions ---
+        function displayGameMessage(message, isHTML = false) { if (!infoMessageElement) return; if (isHTML) { infoMessageElement.innerHTML = message; infoMessageElement.classList.remove('draw-message'); } else { infoMessageElement.textContent = message; if (gameState === 'DRAWING') infoMessageElement.classList.add('draw-message'); else infoMessageElement.classList.remove('draw-message'); } }
+        function updateGameStatusInfo(text) { if (gameStatusInfoElement) gameStatusInfoElement.textContent = text; }
+        function showMessage(message, duration = 3000) { messageBox.textContent = message; messageBox.style.display = 'block'; if (messageBox.timer) clearTimeout(messageBox.timer); messageBox.timer = setTimeout(() => { messageBox.style.display = 'none'; messageBox.timer = null; }, duration); }
+        function getBidDisplayString(bidValue) { if (bidValue === ONE_MARK) return "1 Mark (42)"; if (bidValue === TWO_MARKS) return "2 Marks"; if (bidValue >= MIN_BID && bidValue < ONE_MARK) return `${bidValue}`; if (bidValue === 0) return "--"; return "Pass"; }
+        function dominoToString(dominoData) { return `${dominoData.pips1}-${dominoData.pips2}`; } // Helper to format domino for logging
+
+        // --- Play Logic Helpers ---
+        function getSuitLed() { if (!currentHandState || currentHandState.currentTrick.length === 0) return null; const ld = currentHandState.currentTrick[0].dominoData; const trump = currentHandState.trumpSuit; if (ld.pips1 === ld.pips2) return ld.pips1; if (trump !== null && trump >= 0) { if (ld.pips1 === trump || ld.pips2 === trump) return trump; } return Math.max(ld.pips1, ld.pips2); } // Corrected logic
+        function getLegalMoves(playerIndex) { const hand = playerHands[playerIndex]; const trumpSuit = currentHandState.trumpSuit; const currentTrick = currentHandState.currentTrick; const isLeading = currentTrick.length === 0; const results = []; if (isLeading) { hand.forEach(dd => results.push({ dominoData: dd, isLegal: true, reason: null })); return results; } const suitLed = getSuitLed(); const isTrumpLed = suitLed === trumpSuit; let canFollow = false; for (const d of hand) { const isTrump = d.pips1 === trumpSuit || d.pips2 === trumpSuit || (d.pips1 === d.pips2 && d.pips1 === trumpSuit); if (isTrumpLed) { if (isTrump) { canFollow = true; break; } } else { if (!isTrump && (d.pips1 === suitLed || d.pips2 === suitLed)) { canFollow = true; break; } } } hand.forEach(dd => { const isTrump = dd.pips1 === trumpSuit || dd.pips2 === trumpSuit || (dd.pips1 === dd.pips2 && dd.pips1 === trumpSuit); let isLegal = false; let reason = null; if (canFollow) { if (isTrumpLed) { isLegal = isTrump; if (!isLegal) reason = "Must follow trump."; } else { const matches = !isTrump && (dd.pips1 === suitLed || dd.pips2 === suitLed); isLegal = matches; if (!isLegal) reason = `Must follow ${SUIT_NAMES[suitLed]}.`; } } else { isLegal = true; } results.push({ dominoData: dd, isLegal, reason }); }); return results; }
+
+        /** Handles turn advancement after a play */
+        function handlePlayComplete(playerIndex) {
+            if (currentHandState.currentTrick.length === PLAYER_COUNT) {
+                // Trick is complete
+                updateCurrentPlayerIndicator(-1); // Clear highlight immediately
+                setTimeout(() => {
+                    // Determine winner and score trick
+                    const winnerInfo = determineTrickWinner();
+                    const trickPoints = scoreTrick(currentHandState.currentTrick);
+                    const winningTeamIndex = winnerInfo.winnerIndex % 2;
+                    currentHandState.tricksWon[winningTeamIndex]++;
+                    currentHandState.pointsTaken[winningTeamIndex] += trickPoints;
+
+                    // --- Log Trick Info ---
+                    console.group(`Trick ${currentHandState.tricksWon[0] + currentHandState.tricksWon[1]} Summary`);
+                    const leadEntry = currentHandState.currentTrick.find(entry => entry.playerIndex === currentHandState.leadPlayerIndex);
+                    console.log(`Lead: ${playerNames[leadEntry.playerIndex]} played ${dominoToString(leadEntry.dominoData)} (Suit: ${getSuitLed()})`); // Log suit led
+                    currentHandState.currentTrick.forEach(entry => {
+                        if(entry.playerIndex !== currentHandState.leadPlayerIndex) {
+                            console.log(` -> ${playerNames[entry.playerIndex]} played ${dominoToString(entry.dominoData)}`);
+                        }
+                    });
+                    console.log(`Winner: ${playerNames[winnerInfo.winnerIndex]} with ${dominoToString(winnerInfo.winningDominoData)}`);
+                    console.log(`Points: ${trickPoints}`);
+                    console.groupEnd();
+                    // --- End Log ---
+
+                    // Update UI
+                    updateTrickDisplay(winnerInfo, currentHandState.currentTrick); // Add to visual stack
+                    showMessage(`${playerNames[winnerInfo.winnerIndex]} wins trick (+${trickPoints} points).`, 2000); // Show temp message
+
+                    // Prepare for next trick or end hand
+                    playAreaDisplay.innerHTML = ''; // Clear played dominoes visually
+                    currentHandState.currentTrick = [];
+                    startNextTrick(winnerInfo.winnerIndex); // Winner leads next
+
+                }, TRICK_END_PAUSE); // Pause before processing trick end
+            } else {
+                // Trick not complete, advance player
+                const nextPlayerIndex = (playerIndex + 1) % PLAYER_COUNT;
+                currentHandState.currentPlayerIndex = nextPlayerIndex;
+                triggerNextPlayTurn(); // Start next player's turn
+            }
+        }
+
+        /** Determines the winner of the current completed trick */
+        function determineTrickWinner() {
+            const trick = currentHandState.currentTrick;
+            const trump = currentHandState.trumpSuit;
+            const leadEntry = trick.find(entry => entry.playerIndex === currentHandState.leadPlayerIndex);
+            if (!leadEntry) { console.error("Lead not found in trick!", trick); return trick[0]; } // Error fallback
+            const suitLed = getSuitLed();
+            const isTrumpLed = suitLed === trump;
+
+            let winningEntry = leadEntry;
+
+            for (let i = 0; i < trick.length; i++) {
+                const currentEntry = trick[i];
+                if (currentEntry.playerIndex === winningEntry.playerIndex) continue; // Skip comparing to self
+
+                const winningDomino = winningEntry.dominoData;
+                const currentDomino = currentEntry.dominoData;
+
+                const isWinningTrump = winningDomino.pips1 === trump || winningDomino.pips2 === trump || (winningDomino.pips1 === winningDomino.pips2 && winningDomino.pips1 === trump);
+                const isCurrentTrump = currentDomino.pips1 === trump || currentDomino.pips2 === trump || (currentDomino.pips1 === currentDomino.pips2 && currentDomino.pips1 === trump);
+
+                // Rule 1: Trump beats non-trump
+                if (isCurrentTrump && !isWinningTrump) { winningEntry = currentEntry; continue; }
+                if (!isCurrentTrump && isWinningTrump) { continue; }
+
+                // Rule 2: If both are trump, higher trump wins
+                if (isCurrentTrump && isWinningTrump) {
+                    const currentIsDouble = currentDomino.pips1 === currentDomino.pips2;
+                    const winningIsDouble = winningDomino.pips1 === winningDomino.pips2;
+                    if (currentIsDouble && !winningIsDouble) { winningEntry = currentEntry; continue; } // Double beats non-double
+                    if (!currentIsDouble && winningIsDouble) { continue; } // Non-double loses to double
+                    // If both same type (double/non-double), compare values
+                     const currentCompValue = currentIsDouble ? currentDomino.pips1 : (currentDomino.pips1 === trump ? currentDomino.pips2 : currentDomino.pips1);
+                     const winningCompValue = winningIsDouble ? winningDomino.pips1 : (winningDomino.pips1 === trump ? winningDomino.pips2 : winningDomino.pips1);
+                     // If off-pips are equal (only possible for doubles), compare the primary pip value (higher wins)
+                     if (currentCompValue > winningCompValue) {
+                         winningEntry = currentEntry;
+                     } else if (currentCompValue === winningCompValue && !currentIsDouble && !winningIsDouble) { // Compare primary value only if off-pips equal AND both non-double
+                          const currentPrimaryValue = Math.max(currentDomino.pips1, currentDomino.pips2);
+                          const winningPrimaryValue = Math.max(winningDomino.pips1, winningDomino.pips2);
+                          if (currentPrimaryValue > winningPrimaryValue) {
+                              winningEntry = currentEntry;
+                          }
+                     }
+                    continue;
+                }
+
+                // Rule 3: If neither is trump, compare based on suit led
+                const currentMatchesSuit = currentDomino.pips1 === suitLed || currentDomino.pips2 === suitLed || (currentDomino.pips1 === currentDomino.pips2 && currentDomino.pips1 === suitLed);
+                const winningMatchesSuit = winningDomino.pips1 === suitLed || winningDomino.pips2 === suitLed || (winningDomino.pips1 === winningDomino.pips2 && winningDomino.pips1 === suitLed);
+
+                if (currentMatchesSuit && !winningMatchesSuit) {
+                    // This implies winningEntry sloughed off. Current entry following suit wins.
+                    winningEntry = currentEntry;
+                    continue;
+                }
+                if (currentMatchesSuit && winningMatchesSuit) {
+                    // Both followed suit, higher domino wins (double high)
+                    const currentIsDouble = currentDomino.pips1 === currentDomino.pips2;
+                    const winningIsDouble = winningDomino.pips1 === winningDomino.pips2;
+                    if (currentIsDouble && !winningIsDouble) { winningEntry = currentEntry; continue; } // Double beats non-double
+                    if (!currentIsDouble && winningIsDouble) { continue; } // Non-double loses to double
+
+                    // If both non-double, compare the non-leading pip's value (higher wins)
+                    const currentOffPip = (currentDomino.pips1 === suitLed) ? currentDomino.pips2 : currentDomino.pips1;
+                    const winningOffPip = (winningDomino.pips1 === suitLed) ? winningDomino.pips2 : winningDomino.pips1;
+                    if (currentOffPip > winningOffPip) {
+                        winningEntry = currentEntry;
+                    }
+                    continue;
+                }
+                // If current doesn't match suit, it cannot win if winningEntry matched suit.
+            }
+            return { winnerIndex: winningEntry.playerIndex, winningDominoData: winningEntry.dominoData };
+        }
+
+        /** Calculates points in a completed trick */
+        function scoreTrick(trick) {
+            let points = 1; // 1 point for the trick itself
+            trick.forEach(entry => {
+                const pips1 = entry.dominoData.pips1;
+                const pips2 = entry.dominoData.pips2;
+                if ((pips1 + pips2) % 5 === 0 && (pips1 + pips2) > 0) { // Count 5s and 10s (but not 0-0)
+                    points += (pips1 + pips2);
+                }
+            });
+            return points;
+        }
+
+        /** Updates the visual display of won tricks */
+        function updateTrickDisplay(winnerInfo, trick) {
+            const winningTeamIndex = winnerInfo.winnerIndex % 2;
+            const targetStack = winningTeamIndex === 0 ? tricksTeam0Display : tricksTeam1Display;
+
+            if (targetStack) {
+                const trickColumn = document.createElement('div');
+                trickColumn.classList.add('trick-column');
+
+                // Add micro dominoes to the column
+                trick.forEach(entry => {
+                    const microDomino = renderDomino(entry.dominoData, true, 'micro'); // Use 'micro' size
+                    microDomino.style.transform = 'rotate(0deg)'; // Ensure horizontal
+                    trickColumn.appendChild(microDomino);
+                });
+
+                targetStack.appendChild(trickColumn); // Append column to the row
+
+                // Update trick count display using accumulated points
+                const countSpan = targetStack.querySelector('.trick-count-value');
+                if (countSpan) {
+                    countSpan.textContent = currentHandState.pointsTaken[winningTeamIndex]; // Display points
+                }
+            }
+        }
+
+        /** Sets up the next trick or transitions to scoring */
+        function startNextTrick(nextLeaderIndex) {
+            currentHandState.leadPlayerIndex = nextLeaderIndex;
+            currentHandState.currentPlayerIndex = nextLeaderIndex;
+
+            // Check if hand is over (no dominoes left in player's hand)
+            // Check any player's hand, assuming all hands have same size
+            if (playerHands[0].length === 0) {
+                setGameState('SCORING');
+            } else {
+                triggerNextPlayTurn();
+            }
+        }
+
+         /** Starts the next player's turn during the PLAYING phase */
+        function triggerNextPlayTurn() {
+            const playerIndex = currentHandState.currentPlayerIndex;
+            updateCurrentPlayerIndicator(playerIndex); // Highlight current player
+            if (gameState === 'PLAYING') renderPlayerHandWithLegality(); // Update legality display
+
+            if (playerIndex === 0) { // Human player's turn
+                // Ready for player input
+            } else { // AI player's turn
+                initiateAiPlayTurn(playerIndex);
+            }
+        }
+
+        /** Renders player hand and applies legality styling */
+        function renderPlayerHandWithLegality() {
+            // clearHandDisplay(); // Don't clear, modify existing
+            const legalMoves = getLegalMoves(0);
+            const legalMovesMap = new Map(legalMoves.map(m => [m.dominoData.id, m]));
+
+            playerHandDisplay.querySelectorAll('.hand-row .domino').forEach(dominoEl => {
+                const moveInfo = legalMovesMap.get(dominoEl.id);
+                const isLegal = moveInfo ? moveInfo.isLegal : false;
+
+                dominoEl.draggable = true; // ALWAYS allow dragging for rearrangement
+                dominoEl.style.cursor = 'pointer';
+
+                if (!isLegal && gameState === 'PLAYING' && currentHandState.currentPlayerIndex === 0) {
+                    dominoEl.classList.add('illegal-domino');
+                } else {
+                    dominoEl.classList.remove('illegal-domino');
+                }
+            });
+            // updateHandPadding(); // Not needed if rows don't change
+        }
+        /** Simulates an AI player playing a domino */
+        function initiateAiPlayTurn(aiPlayerIndex) { setTimeout(() => { if (gameState !== 'PLAYING') return; const legalMoves = getLegalMoves(aiPlayerIndex).filter(m => m.isLegal); if (legalMoves.length === 0) { console.error(`AI ${aiPlayerIndex} has no legal moves!`); handlePlayComplete(aiPlayerIndex); return; } const chosenMove = legalMoves[Math.floor(Math.random() * legalMoves.length)]; const { dominoData } = chosenMove; const handIndex = playerHands[aiPlayerIndex].findIndex(d => d.id === dominoData.id); if (handIndex > -1) playerHands[aiPlayerIndex].splice(handIndex, 1); currentHandState.currentTrick.push({ dominoData, playerIndex: aiPlayerIndex });
+            // Clear placeholder if first domino
+            if (currentHandState.currentTrick.length === 1) playAreaDisplay.innerHTML = '';
+            const playedDominoElement = renderDomino(dominoData, true, 'normal'); playedDominoElement.dataset.playerIndex = aiPlayerIndex; /* Add player index */ playAreaDisplay.appendChild(playedDominoElement); renderOpponentHands(); handlePlayComplete(aiPlayerIndex); }, AI_THINKING_TIME); }
+
+        // --- Initialization ---
+        function initializeGame() {
+            console.clear();
+            // Randomize dealer only on first load
+            if (currentDealerIndex === -1) {
+                currentDealerIndex = Math.floor(Math.random() * PLAYER_COUNT);
+            }
+            setupNewHand();
+            updateScoreDisplay(); // Show initial score
+        }
+        newHandButton.addEventListener('click', initializeGame);
+        window.onload = initializeGame;
+        // Add listener to overlay to close popup
+        popupOverlay.addEventListener('click', hideBidPopup);
+        // Add listener to popup itself to prevent clicks inside closing it
+        bidPopupElement.addEventListener('click', (event) => {
+            event.stopPropagation();
+        });
+
+    </script>
+
+</body>
+</html>
